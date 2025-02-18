@@ -256,6 +256,12 @@ func TestLabels(t *testing.T) {
 		if repl != expect[lbl] {
 			t.Errorf("Expected value %q, got %q", expect[lbl], repl)
 		}
+
+		// test empty state and nil recorder won't panic
+		repl_empty := replacer.Replace(ctx, request.Request{}, nil, lbl)
+		if repl_empty != EmptyValue {
+			t.Errorf("Expected empty value %q, got %q", EmptyValue, repl_empty)
+		}
 	}
 }
 
@@ -276,7 +282,6 @@ func BenchmarkReplacer(b *testing.B) {
 }
 
 func BenchmarkReplacer_CommonLogFormat(b *testing.B) {
-
 	w := dnstest.NewRecorder(&test.ResponseWriter{})
 	r := new(dns.Msg)
 	r.SetQuestion("example.org.", dns.TypeHINFO)
@@ -341,12 +346,11 @@ func TestMetadataReplacement(t *testing.T) {
 		Next: next,
 	}
 
-	m.ServeDNS(context.TODO(), &test.ResponseWriter{}, new(dns.Msg))
-	ctx := next.ctx // important because the m.ServeDNS has only now populated the context
-
 	w := dnstest.NewRecorder(&test.ResponseWriter{})
 	r := new(dns.Msg)
 	r.SetQuestion("example.org.", dns.TypeHINFO)
+
+	ctx := m.Collect(context.TODO(), request.Request{W: w, Req: r})
 
 	repl := New()
 	state := request.Request{W: w, Req: r}

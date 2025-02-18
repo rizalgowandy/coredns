@@ -31,7 +31,6 @@ var tests = []struct {
 }
 
 func TestResponseReverter(t *testing.T) {
-
 	rules := []Rule{}
 	r, _ := newNameRule("stop", "regex", `(core)\.(dns)\.(rocks)`, "{2}.{1}.{3}", "answer", "name", `(dns)\.(core)\.(rocks)`, "{2}.{1}.{3}")
 	rules = append(rules, r)
@@ -98,7 +97,6 @@ var valueTests = []struct {
 }
 
 func TestValueResponseReverter(t *testing.T) {
-
 	rules := []Rule{}
 	r, err := newNameRule("stop", "regex", `(.*)\.domain\.uk`, "{1}.cluster.local", "answer", "name", `(.*)\.cluster\.local`, "{1}.domain.uk", "answer", "value", `(.*)\.cluster\.local`, "{1}.domain.uk")
 	if err != nil {
@@ -128,6 +126,24 @@ func TestValueResponseReverter(t *testing.T) {
 	rules = append(rules, r)
 
 	doValueReverterTests("suffix", rules, t)
+
+	// multiple rules
+	rules = []Rule{}
+	r, err = newNameRule("continue", "suffix", `.domain.uk`, ".domain.us", "answer", "auto")
+	if err != nil {
+		t.Errorf("cannot parse rule: %s", err)
+		return
+	}
+	rules = append(rules, r)
+
+	r, err = newNameRule("stop", "suffix", `.domain.us`, ".cluster.local", "answer", "auto")
+	if err != nil {
+		t.Errorf("cannot parse rule: %s", err)
+		return
+	}
+	rules = append(rules, r)
+
+	doValueReverterTests("suffix_multiple", rules, t)
 }
 
 func doValueReverterTests(name string, rules []Rule, t *testing.T) {

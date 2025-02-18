@@ -1,4 +1,4 @@
-package forward
+package proxy
 
 import (
 	"crypto/tls"
@@ -21,6 +21,7 @@ type Transport struct {
 	expire      time.Duration                  // After this duration a connection is expired.
 	addr        string
 	tlsConfig   *tls.Config
+	proxyName   string
 
 	dial  chan string
 	yield chan *persistConn
@@ -28,7 +29,7 @@ type Transport struct {
 	stop  chan bool
 }
 
-func newTransport(addr string) *Transport {
+func newTransport(proxyName, addr string) *Transport {
 	t := &Transport{
 		avgDialTime: int64(maxDialTimeout / 2),
 		conns:       [typeTotalCount][]*persistConn{},
@@ -38,13 +39,15 @@ func newTransport(addr string) *Transport {
 		yield:       make(chan *persistConn),
 		ret:         make(chan *persistConn),
 		stop:        make(chan bool),
+		proxyName:   proxyName,
 	}
 	return t
 }
 
-// connManagers manages the persistent connection cache for UDP and TCP.
+// connManager manages the persistent connection cache for UDP and TCP.
 func (t *Transport) connManager() {
 	ticker := time.NewTicker(defaultExpire)
+	defer ticker.Stop()
 Wait:
 	for {
 		select {
@@ -152,10 +155,4 @@ const (
 	defaultExpire  = 10 * time.Second
 	minDialTimeout = 1 * time.Second
 	maxDialTimeout = 30 * time.Second
-)
-
-// Make a var for minimizing this value in tests.
-var (
-	// Some resolves might take quite a while, usually (cached) responses are fast. Set to 2s to give us some time to retry a different upstream.
-	readTimeout = 2 * time.Second
 )

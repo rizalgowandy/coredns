@@ -25,11 +25,13 @@ func TestSetup(t *testing.T) {
 		{"grpc . 127.0.0.1:8080", false, ".", nil, ""},
 		{"grpc . [::1]:53", false, ".", nil, ""},
 		{"grpc . [2003::1]:53", false, ".", nil, ""},
+		{"grpc . unix:///var/run/g.sock", false, ".", nil, ""},
 		// negative
 		{"grpc . a27.0.0.1", true, "", nil, "not an IP"},
 		{"grpc . 127.0.0.1 {\nblaatl\n}\n", true, "", nil, "unknown property"},
 		{`grpc . ::1
 		grpc com ::2`, true, "", nil, "plugin"},
+		{"grpc xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx 127.0.0.1", true, "", nil, "unable to normalize 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx'"},
 	}
 
 	for i, test := range tests {

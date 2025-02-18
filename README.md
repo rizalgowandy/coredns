@@ -2,14 +2,13 @@
 
 [![Documentation](https://img.shields.io/badge/godoc-reference-blue.svg)](https://godoc.org/github.com/coredns/coredns)
 ![CodeQL](https://github.com/coredns/coredns/actions/workflows/codeql-analysis.yml/badge.svg)
-![Go Fmt](https://github.com/coredns/coredns/actions/workflows/go.fmt.yml/badge.svg)
 ![Go Tests](https://github.com/coredns/coredns/actions/workflows/go.test.yml/badge.svg)
-![Go Tidy](https://github.com/coredns/coredns/actions/workflows/go.tidy.yml/badge.svg)
 [![CircleCI](https://circleci.com/gh/coredns/coredns.svg?style=shield)](https://circleci.com/gh/coredns/coredns)
 [![Code Coverage](https://img.shields.io/codecov/c/github/coredns/coredns/master.svg)](https://codecov.io/github/coredns/coredns?branch=master)
 [![Docker Pulls](https://img.shields.io/docker/pulls/coredns/coredns.svg)](https://hub.docker.com/r/coredns/coredns)
 [![Go Report Card](https://goreportcard.com/badge/github.com/coredns/coredns)](https://goreportcard.com/report/coredns/coredns)
 [![CII Best Practices](https://bestpractices.coreinfrastructure.org/projects/1250/badge)](https://bestpractices.coreinfrastructure.org/projects/1250)
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/coredns/coredns/badge)](https://scorecard.dev/viewer/?uri=github.com/coredns/coredns)
 
 CoreDNS is a DNS server/forwarder, written in Go, that chains [plugins](https://coredns.io/plugins).
 Each plugin performs a (DNS) function.
@@ -20,9 +19,12 @@ CoreDNS is a fast and flexible DNS server. The key word here is *flexible*: with
 are able to do what you want with your DNS data by utilizing plugins. If some functionality is not
 provided out of the box you can add it by [writing a plugin](https://coredns.io/explugins).
 
-CoreDNS can listen for DNS requests coming in over UDP/TCP (go'old DNS), TLS ([RFC
-7858](https://tools.ietf.org/html/rfc7858)), also called DoT, DNS over HTTP/2 - DoH -
-([RFC 8484](https://tools.ietf.org/html/rfc8484)) and [gRPC](https://grpc.io) (not a standard).
+CoreDNS can listen for DNS requests coming in over:
+* UDP/TCP (go'old DNS).
+* TLS - DoT ([RFC 7858](https://tools.ietf.org/html/rfc7858)).
+* DNS over HTTP/2 - DoH ([RFC 8484](https://tools.ietf.org/html/rfc8484)).
+* DNS over QUIC - DoQ ([RFC 9250](https://tools.ietf.org/html/rfc9250)). 
+* [gRPC](https://grpc.io) (not a standard).
 
 Currently CoreDNS is able to:
 
@@ -55,7 +57,7 @@ out-of-tree plugins.
 To compile CoreDNS, we assume you have a working Go setup. See various tutorials if you don’t have
 that already configured.
 
-First, make sure your golang version is 1.17 or higher as `go mod` support and other api is needed.
+First, make sure your golang version is 1.21 or higher as `go mod` support and other api is needed.
 See [here](https://github.com/golang/go/wiki/Modules) for `go mod` details.
 Then, check out the project and run `make` to compile the binary:
 
@@ -73,7 +75,9 @@ CoreDNS requires Go to compile. However, if you already have docker installed an
 setup a Go environment, you could build CoreDNS easily:
 
 ```
-$ docker run --rm -i -t -v $PWD:/v -w /v golang:1.17 make
+docker run --rm -i -t \
+    -v $PWD:/go/src/github.com/coredns/coredns -w /go/src/github.com/coredns/coredns \
+        golang:1.22 sh -c 'GOFLAGS="-buildvcs=false" make gen && GOFLAGS="-buildvcs=false" make'
 ```
 
 The above command alone will have `coredns` binary generated.
@@ -110,7 +114,7 @@ on port `53` and enables `whoami` plugin is:
 ~~~
 
 Sometimes port number 53 is occupied by system processes. In that case you can start the CoreDNS server
-while modifying the Corefile as given below so that the CoreDNS server starts on port 1053.
+while modifying the `Corefile` as given below so that the CoreDNS server starts on port 1053.
 
 ~~~ corefile
 .:1053 {
@@ -118,8 +122,28 @@ while modifying the Corefile as given below so that the CoreDNS server starts on
 }
 ~~~
 
-If you have a Corefile without a port number specified it will, by default, use port 53, but you can
+If you have a `Corefile` without a port number specified it will, by default, use port 53, but you can
 override the port with the `-dns.port` flag: `coredns -dns.port 1053`, runs the server on port 1053.
+
+You may import other text files into the `Corefile` using the _import_ directive.  You can use globs to match multiple
+files with a single _import_ directive.
+
+~~~ txt
+.:53 {
+    import example1.txt
+}
+import example2.txt
+~~~
+
+You can use environment variables in the `Corefile` with `{$VARIABLE}`.  Note that each environment variable is inserted
+into the `Corefile` as a single token. For example, an environment variable with a space in it will be treated as a single
+token, not as two separate tokens.
+
+~~~ txt
+.:53 {
+    {$ENV_VAR}
+}
+~~~
 
 A Corefile for a CoreDNS server that forward any queries to an upstream DNS (e.g., `8.8.8.8`) is as follows:
 
@@ -193,6 +217,15 @@ tls://example.org grpc://example.org {
 }
 ~~~
 
+Similarly, for QUIC (DoQ):
+
+~~~ corefile
+quic://example.org {
+    whoami
+    tls mycert mykey
+}
+~~~
+
 And for DNS over HTTP/2 (DoH) use:
 
 ~~~ corefile
@@ -223,22 +256,22 @@ When no transport protocol is specified the default `dns://` is assumed.
 
 ## Community
 
-We're most active on Github (and Slack):
+We're most active on GitHub (and Slack):
 
-- Github: <https://github.com/coredns/coredns>
+- GitHub: <https://github.com/coredns/coredns>
 - Slack: #coredns on <https://slack.cncf.io>
 
 More resources can be found:
 
 - Website: <https://coredns.io>
-- Blog: <https://blog.coredns.io>
+- Blog: <https://coredns.io/blog/>
 - Twitter: [@corednsio](https://twitter.com/corednsio)
 - Mailing list/group: <coredns-discuss@googlegroups.com> (not very active)
 
 ## Contribution guidelines
 
 If you want to contribute to CoreDNS, be sure to review the [contribution
-guidelines](CONTRIBUTING.md).
+guidelines](./.github/CONTRIBUTING.md).
 
 ## Deployment
 
@@ -261,9 +294,11 @@ And finally 1.4.1 that removes the config workarounds.
 
 ## Security
 
-### Security Audit
-A third party security audit was performed by Cure53, you can see the full report
-[here](https://coredns.io/assets/DNS-01-report.pdf).
+### Security Audits
+
+Third party security audits have been performed by:
+* [Cure53](https://cure53.de) in March 2018. [Full Report](https://coredns.io/assets/DNS-01-report.pdf)
+* [Trail of Bits](https://www.trailofbits.com) in March 2022. [Full Report](https://github.com/trailofbits/publications/blob/master/reviews/CoreDNS.pdf)
 
 ### Reporting security vulnerabilities
 
@@ -272,4 +307,4 @@ issue, instead send your report privately to `security@coredns.io`. Security rep
 appreciated and we will publicly thank you for it.
 
 Please consult [security vulnerability disclosures and security fix and release process
-document](https://github.com/coredns/coredns/blob/master/SECURITY.md)
+document](https://github.com/coredns/coredns/blob/master/.github/SECURITY.md)

@@ -1,13 +1,15 @@
-// Package forward implements a forwarding proxy. It caches an upstream net.Conn for some time, so if the same
+// Package proxy implements a forwarding proxy. It caches an upstream net.Conn for some time, so if the same
 // client returns the upstream's Conn will be precached. Depending on how you benchmark this looks to be
 // 50% faster than just opening a new connection for every client. It works with UDP and TCP and uses
 // inband healthchecking.
-package forward
+package proxy
 
 import (
 	"context"
+	"errors"
 	"io"
 	"strconv"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -54,10 +56,10 @@ func (t *Transport) Dial(proto string) (*persistConn, bool, error) {
 	pc := <-t.ret
 
 	if pc != nil {
-		ConnCacheHitsCount.WithLabelValues(t.addr, proto).Add(1)
+		connCacheHitsCount.WithLabelValues(t.proxyName, t.addr, proto).Add(1)
 		return pc, true, nil
 	}
-	ConnCacheMissesCount.WithLabelValues(t.addr, proto).Add(1)
+	connCacheMissesCount.WithLabelValues(t.proxyName, t.addr, proto).Add(1)
 
 	reqTime := time.Now()
 	timeout := t.dialTimeout()
@@ -72,14 +74,14 @@ func (t *Transport) Dial(proto string) (*persistConn, bool, error) {
 }
 
 // Connect selects an upstream, sends the request and waits for a response.
-func (p *Proxy) Connect(ctx context.Context, state request.Request, opts options) (*dns.Msg, error) {
+func (p *Proxy) Connect(ctx context.Context, state request.Request, opts Options) (*dns.Msg, error) {
 	start := time.Now()
 
 	proto := ""
 	switch {
-	case opts.forceTCP: // TCP flag has precedence over UDP flag
+	case opts.ForceTCP: // TCP flag has precedence over UDP flag
 		proto = "tcp"
-	case opts.preferUDP:
+	case opts.PreferUDP:
 		proto = "udp"
 	default:
 		proto = state.Proto()
@@ -113,10 +115,22 @@ func (p *Proxy) Connect(ctx context.Context, state request.Request, opts options
 	}
 
 	var ret *dns.Msg
-	pc.c.SetReadDeadline(time.Now().Add(readTimeout))
+	pc.c.SetReadDeadline(time.Now().Add(p.readTimeout))
 	for {
 		ret, err = pc.c.ReadMsg()
 		if err != nil {
+			if ret != nil && (state.Req.Id == ret.Id) && p.transport.transportTypeFromConn(pc) == typeUDP && shouldTruncateResponse(err) {
+				// For UDP, if the error is an overflow, we probably have an upstream misbehaving in some way.
+				// (e.g. sending >512 byte responses without an eDNS0 OPT RR).
+				// Instead of returning an error, return an empty response with TC bit set. This will make the
+				// client retry over TCP (if that's supported) or at least receive a clean
+				// error. The connection is still good so we break before the close.
+
+				// Truncate the response.
+				ret = truncateResponse(ret)
+				break
+			}
+
 			pc.c.Close() // not giving it back
 			if err == io.EOF && cached {
 				return nil, ErrCachedClosed
@@ -142,11 +156,33 @@ func (p *Proxy) Connect(ctx context.Context, state request.Request, opts options
 		rc = strconv.Itoa(ret.Rcode)
 	}
 
-	RequestCount.WithLabelValues(p.addr).Add(1)
-	RcodeCount.WithLabelValues(rc, p.addr).Add(1)
-	RequestDuration.WithLabelValues(p.addr, rc).Observe(time.Since(start).Seconds())
+	requestDuration.WithLabelValues(p.proxyName, p.addr, rc).Observe(time.Since(start).Seconds())
 
 	return ret, nil
 }
 
 const cumulativeAvgWeight = 4
+
+// Function to determine if a response should be truncated.
+func shouldTruncateResponse(err error) bool {
+	// This is to handle a scenario in which upstream sets the TC bit, but doesn't truncate the response
+	// and we get ErrBuf instead of overflow.
+	if _, isDNSErr := err.(*dns.Error); isDNSErr && errors.Is(err, dns.ErrBuf) {
+		return true
+	} else if strings.Contains(err.Error(), "overflow") {
+		return true
+	}
+	return false
+}
+
+// Function to return an empty response with TC (truncated) bit set.
+func truncateResponse(response *dns.Msg) *dns.Msg {
+	// Clear out Answer, Extra, and Ns sections
+	response.Answer = nil
+	response.Extra = nil
+	response.Ns = nil
+
+	// Set TC bit to indicate truncation.
+	response.Truncated = true
+	return response
+}

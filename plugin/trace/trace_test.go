@@ -3,9 +3,12 @@ package trace
 import (
 	"context"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/coredns/caddy"
+	"github.com/coredns/coredns/core/dnsserver"
 	"github.com/coredns/coredns/plugin"
 	"github.com/coredns/coredns/plugin/pkg/dnstest"
 	"github.com/coredns/coredns/plugin/pkg/rcode"
@@ -13,6 +16,7 @@ import (
 	"github.com/coredns/coredns/request"
 
 	"github.com/miekg/dns"
+	"github.com/opentracing/opentracing-go"
 	"github.com/opentracing/opentracing-go/mocktracer"
 )
 
@@ -129,5 +133,42 @@ func TestTrace(t *testing.T) {
 				t.Errorf("Unexpected span tag: rootSpan.Tag(%v): want %v, got %v", "error", true, rootSpan.Tag("error"))
 			}
 		})
+	}
+}
+
+func TestTrace_DOH_TraceHeaderExtraction(t *testing.T) {
+	w := dnstest.NewRecorder(&test.ResponseWriter{})
+	m := mocktracer.New()
+	tr := &trace{
+		Next: test.HandlerFunc(func(_ context.Context, w dns.ResponseWriter, r *dns.Msg) (int, error) {
+			if plugin.ClientWrite(dns.RcodeSuccess) {
+				m := new(dns.Msg)
+				m.SetRcode(r, dns.RcodeSuccess)
+				w.WriteMsg(m)
+			}
+			return dns.RcodeSuccess, nil
+		}),
+		every:  1,
+		tracer: m,
+	}
+	q := new(dns.Msg).SetQuestion("example.net.", dns.TypeA)
+
+	req := httptest.NewRequest(http.MethodPost, "/dns-query", nil)
+
+	outsideSpan := m.StartSpan("test-header-span")
+	outsideSpan.Tracer().Inject(outsideSpan.Context(), opentracing.HTTPHeaders, opentracing.HTTPHeadersCarrier(req.Header))
+	defer outsideSpan.Finish()
+
+	ctx := context.TODO()
+	ctx = context.WithValue(ctx, dnsserver.HTTPRequestKey{}, req)
+
+	tr.ServeDNS(ctx, w, q)
+
+	fs := m.FinishedSpans()
+	rootCoreDNSspan := fs[1]
+	rootCoreDNSTraceID := rootCoreDNSspan.Context().(mocktracer.MockSpanContext).TraceID
+	outsideSpanTraceID := outsideSpan.Context().(mocktracer.MockSpanContext).TraceID
+	if rootCoreDNSTraceID != outsideSpanTraceID {
+		t.Errorf("Unexpected traceID: rootSpan.TraceID: want %v, got %v", rootCoreDNSTraceID, outsideSpanTraceID)
 	}
 }

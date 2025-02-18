@@ -15,14 +15,15 @@ import (
 
 type APIConnReverseTest struct{}
 
-func (APIConnReverseTest) HasSynced() bool                    { return true }
-func (APIConnReverseTest) Run()                               {}
-func (APIConnReverseTest) Stop() error                        { return nil }
-func (APIConnReverseTest) PodIndex(string) []*object.Pod      { return nil }
-func (APIConnReverseTest) EpIndex(string) []*object.Endpoints { return nil }
-func (APIConnReverseTest) EndpointsList() []*object.Endpoints { return nil }
-func (APIConnReverseTest) ServiceList() []*object.Service     { return nil }
-func (APIConnReverseTest) Modified() int64                    { return 0 }
+func (APIConnReverseTest) HasSynced() bool                             { return true }
+func (APIConnReverseTest) Run()                                        {}
+func (APIConnReverseTest) Stop() error                                 { return nil }
+func (APIConnReverseTest) PodIndex(string) []*object.Pod               { return nil }
+func (APIConnReverseTest) EpIndex(string) []*object.Endpoints          { return nil }
+func (APIConnReverseTest) EndpointsList() []*object.Endpoints          { return nil }
+func (APIConnReverseTest) ServiceList() []*object.Service              { return nil }
+func (APIConnReverseTest) SvcExtIndexReverse(string) []*object.Service { return nil }
+func (APIConnReverseTest) Modified(bool) int64                         { return 0 }
 
 func (APIConnReverseTest) SvcIndex(svc string) []*object.Service {
 	if svc != "svc1.testns" {
@@ -37,7 +38,6 @@ func (APIConnReverseTest) SvcIndex(svc string) []*object.Service {
 		},
 	}
 	return svcs
-
 }
 
 func (APIConnReverseTest) SvcIndexReverse(ip string) []*object.Service {
@@ -60,8 +60,10 @@ func (APIConnReverseTest) EpIndexReverse(ip string) []*object.Endpoints {
 		Subsets: []object.EndpointSubset{
 			{
 				Addresses: []object.EndpointAddress{
-					{IP: "10.0.0.100", Hostname: "ep1a"},
-					{IP: "10.0.0.99", Hostname: "double-ep"}, // this endpoint is used by two services
+					{IP: "10.0.0.100", Hostname: "ep1a"}, // this endpoint is duplicated across two slices, which can happen in k8s
+
+					// 10.0.0.99 is used by two services. Only one will have hostname defined, as is typically enforced by K8s
+					{IP: "10.0.0.99", Hostname: "double-ep"},
 				},
 				Ports: []object.EndpointPort{
 					{Port: 80, Protocol: "tcp", Name: "http"},
@@ -93,7 +95,7 @@ func (APIConnReverseTest) EpIndexReverse(ip string) []*object.Endpoints {
 		Subsets: []object.EndpointSubset{
 			{
 				Addresses: []object.EndpointAddress{
-					{IP: "10.0.0.100", Hostname: "ep1a"}, // duplicate endpointslice address
+					{IP: "10.0.0.100", Hostname: "ep1a"}, // This endpoint duplicated across used by two slices, see above
 				},
 				Ports: []object.EndpointPort{
 					{Port: 80, Protocol: "tcp", Name: "http"},
@@ -108,7 +110,7 @@ func (APIConnReverseTest) EpIndexReverse(ip string) []*object.Endpoints {
 		Subsets: []object.EndpointSubset{
 			{
 				Addresses: []object.EndpointAddress{
-					{IP: "10.0.0.99", Hostname: "double-ep"}, // this endpoint is used by two services
+					{IP: "10.0.0.99", Hostname: ""}, // This endpoint is used by two services, see above
 				},
 				Ports: []object.EndpointPort{
 					{Port: 80, Protocol: "tcp", Name: "http"},
@@ -149,11 +151,17 @@ func (APIConnReverseTest) GetNamespaceByName(name string) (*object.Namespace, er
 }
 
 func TestReverse(t *testing.T) {
-
 	k := New([]string{"cluster.local.", "0.10.in-addr.arpa.", "168.192.in-addr.arpa.", "0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.d.c.b.a.4.3.2.1.ip6.arpa.", "0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.3.0.0.7.7.0.0.0.0.d.f.ip6.arpa."})
 	k.APIConn = &APIConnReverseTest{}
 
 	tests := []test.Case{
+		{
+			Qname: "99.0.0.10.in-addr.arpa.", Qtype: dns.TypePTR,
+			Rcode: dns.RcodeSuccess,
+			Answer: []dns.RR{
+				test.PTR("99.0.0.10.in-addr.arpa.      5    IN      PTR       double-ep.svc1.testns.svc.cluster.local."),
+			},
+		},
 		{
 			Qname: "100.0.0.10.in-addr.arpa.", Qtype: dns.TypePTR,
 			Rcode: dns.RcodeSuccess,
@@ -224,14 +232,6 @@ func TestReverse(t *testing.T) {
 				test.SOA("cluster.local.       5     IN      SOA     ns.dns.cluster.local. hostmaster.cluster.local. 1502989566 7200 1800 86400 5"),
 			},
 		},
-		{
-			Qname: "99.0.0.10.in-addr.arpa.", Qtype: dns.TypePTR,
-			Rcode: dns.RcodeSuccess,
-			Answer: []dns.RR{
-				test.PTR("99.0.0.10.in-addr.arpa.      5    IN      PTR       double-ep.svc1.testns.svc.cluster.local."),
-				test.PTR("99.0.0.10.in-addr.arpa.      5    IN      PTR       double-ep.svc2.testns.svc.cluster.local."),
-			},
-		},
 	}
 
 	ctx := context.TODO()
@@ -251,7 +251,7 @@ func TestReverse(t *testing.T) {
 			t.Fatalf("Test %d: got nil message and no error for: %s %d", i, r.Question[0].Name, r.Question[0].Qtype)
 		}
 		if err := test.SortAndCheck(resp, tc); err != nil {
-			t.Error(err)
+			t.Errorf("Test %d error: %s", i, err)
 		}
 	}
 }
